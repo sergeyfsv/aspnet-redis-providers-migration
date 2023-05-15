@@ -170,19 +170,49 @@ namespace Microsoft.Web.Redis
             RedisResult[] lockScriptReturnValueArray = (RedisResult[])rowDataAsRedisResult;
             Debug.Assert(lockScriptReturnValueArray != null);
 
-            SessionStateItemCollection sessionData = null;
             if (lockScriptReturnValueArray.Length > 1 && lockScriptReturnValueArray[1] != null)
             {
-                RedisResult data = lockScriptReturnValueArray[1];
-                var serializedSessionStateItemCollection = data;
+				// Supporting Redis v1 format of storing data as HSET
+				if (lockScriptReturnValueArray[1].Type == ResultType.MultiBulk)
+				{
+					RedisResult[] data = (RedisResult[])lockScriptReturnValueArray[1];
+					ISessionStateItemCollection sessionData = null;
 
-                if (serializedSessionStateItemCollection != null)
-                {
-                    sessionData = DeserializeSessionStateItemCollection(serializedSessionStateItemCollection);
-                }
-            }
-            return sessionData;
-        }
+					// LUA script returns data as object array so keys and values are store one after another
+					// This list has to be even because it contains pair of <key, value> as {key, value, key, value}
+					if (data != null && data.Length != 0 && data.Length % 2 == 0)
+					{
+						sessionData = new SessionStateItemCollection();
+						// In every cycle of loop we are getting one pair of key value and putting it into session items
+						// that is why increment is by 2 because we want to move to next pair
+						for (int i = 0; (i + 1) < data.Length; i += 2)
+						{
+							string key = (string)data[i];
+							object val = RedisUtility.GetObjectFromBytes((byte[])data[i + 1]);
+							if (key != null)
+							{
+								sessionData[key] = val;
+							}
+						}
+					}
+
+					return sessionData;
+				}
+				else
+				{
+					SessionStateItemCollection sessionData = null;
+					var serializedSessionStateItemCollection = lockScriptReturnValueArray[1];
+
+					if (serializedSessionStateItemCollection != null)
+					{
+						sessionData = DeserializeSessionStateItemCollection(serializedSessionStateItemCollection);
+					}
+					return sessionData;
+				}
+			}
+
+			return null;
+		}
 
         private SessionStateItemCollection DeserializeSessionStateItemCollection(RedisResult serializedSessionStateItemCollection)
         {

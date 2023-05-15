@@ -76,7 +76,7 @@ namespace Microsoft.Web.Redis.Tests
             RedisConnectionWrapper redisConn = new RedisConnectionWrapper(Utility.GetDefaultConfigUtility(), id);
             redisConn.redisConnection = A.Fake<IRedisClientConnection>();
 
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                  A<object[]>.That.Matches(o => o.Length == 2))).Returns(returnFromRedis);
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).Returns("Diff-lock-id");
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).Returns(true);
@@ -87,7 +87,7 @@ namespace Microsoft.Web.Redis.Tests
             Assert.Equal("Diff-lock-id", lockId);
             Assert.Null(data);
             Assert.Equal(15, sessionTimeout);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                 A<object[]>.That.Matches(o => o.Length == 2))).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).MustHaveHappened();
@@ -110,7 +110,7 @@ namespace Microsoft.Web.Redis.Tests
             RedisConnectionWrapper redisConn = new RedisConnectionWrapper(Utility.GetDefaultConfigUtility(), id);
             redisConn.redisConnection = A.Fake<IRedisClientConnection>();
 
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                  A<object[]>.That.Matches(o => o.Length == 2))).Returns(returnFromRedis);
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).Returns(lockTime.Ticks.ToString());
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).Returns(true);
@@ -121,7 +121,7 @@ namespace Microsoft.Web.Redis.Tests
             Assert.Equal(lockTime.Ticks.ToString(), lockId);
             Assert.Null(data);
             Assert.Equal(15, sessionTimeout);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                 A<object[]>.That.Matches(o => o.Length == 2))).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).MustHaveHappened();
@@ -155,7 +155,7 @@ namespace Microsoft.Web.Redis.Tests
             object[] sessionData = { "", serializedSessionData };
             object[] returnFromRedis = { lockTime.Ticks.ToString(), sessionData, "15", false };
 
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                  A<object[]>.That.Matches(o => o.Length == 2))).Returns(returnFromRedis);
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).Returns(lockTime.Ticks.ToString());
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).Returns(false);
@@ -167,7 +167,7 @@ namespace Microsoft.Web.Redis.Tests
             Assert.Equal(lockTime.Ticks.ToString(), lockId);
             Assert.Equal(2, data.Count);
             Assert.Equal(15, sessionTimeout);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                 A<object[]>.That.Matches(o => o.Length == 2))).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.IsLocked(A<object>.Ignored)).MustHaveHappened();
@@ -199,7 +199,7 @@ namespace Microsoft.Web.Redis.Tests
             object[] sessionData = { "", serializedSessionData };
             object[] returnFromRedis = { "", sessionData, "15" };
 
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                  A<object[]>.That.Matches(o => o.Length == 0))).Returns(returnFromRedis);
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).Returns("");
             A.CallTo(() => redisConn.redisConnection.GetSessionData(A<object>.Ignored)).Returns(sessionDataReturn);
@@ -210,7 +210,7 @@ namespace Microsoft.Web.Redis.Tests
             Assert.Null(lockId);
             Assert.Equal(2, data.Count);
             Assert.Equal(15, sessionTimeout);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                 A<object[]>.That.Matches(o => o.Length == 0))).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.GetLockId(A<object>.Ignored)).MustHaveHappened();
             A.CallTo(() => redisConn.redisConnection.GetSessionData(A<object>.Ignored)).MustHaveHappened();
@@ -228,7 +228,7 @@ namespace Microsoft.Web.Redis.Tests
             redisConn.redisConnection = A.Fake<IRedisClientConnection>();
 
             redisConn.TryReleaseLockIfLockIdMatch(lockId, 900);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3 && s[0].Equals(redisConn.Keys.LockKey)),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6 && s[0].Equals(redisConn.Keys.LockKey)),
                  A<object[]>.That.Matches(o => o.Length == 2))).MustHaveHappened();
         }
 
@@ -243,7 +243,7 @@ namespace Microsoft.Web.Redis.Tests
             redisConn.redisConnection = A.Fake<IRedisClientConnection>();
 
             redisConn.TryRemoveAndReleaseLock(lockId);
-            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 3),
+            A.CallTo(() => redisConn.redisConnection.Eval(A<string>.Ignored, A<string[]>.That.Matches(s => s.Length == 6),
                  A<object[]>.That.Matches(o => o.Length == 1))).MustHaveHappened();
         }
 

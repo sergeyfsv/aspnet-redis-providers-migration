@@ -8,6 +8,7 @@ using System.IO;
 using System.Web.SessionState;
 using Microsoft.Web.Redis.Tests;
 using StackExchange.Redis;
+using System.Linq;
 using Xunit;
 
 namespace Microsoft.Web.Redis.FunctionalTests
@@ -30,6 +31,17 @@ namespace Microsoft.Web.Redis.FunctionalTests
             RedisConnectionWrapper redisConn = new RedisConnectionWrapper(pc, id);
             return redisConn;
         }
+		
+		private (RedisConnectionWrapper, RedisConnectionWrapperV1) GetRedisConnectionWrappersWithUniqueSession(ProviderConfiguration pc)
+		{
+			string id = Guid.NewGuid().ToString();
+			uniqueSessionNumber++;
+			// Initial connection with redis
+			RedisConnectionWrapper.sharedConnection = null;
+			RedisConnectionWrapper redisConn = new RedisConnectionWrapper(pc, id);
+			RedisConnectionWrapperV1 redisConnV1 = new RedisConnectionWrapperV1(pc, id);
+			return (redisConn, redisConnV1);
+		}
 
         private void DisposeRedisConnectionWrapper(RedisConnectionWrapper redisConn)
         {
@@ -161,10 +173,10 @@ namespace Microsoft.Web.Redis.FunctionalTests
 
                 // Get actual connection and get data blob from redis
                 IDatabase actualConnection = GetRealRedisConnection(redisConn);
-                HashEntry[] sessionDataFromRedis = actualConnection.HashGetAll(redisConn.Keys.DataKey);
+				RedisValue sessionDataFromRedis = actualConnection.StringGet(redisConn.Keys.DataKey);
 
-                // Check that data shoud not be there
-                Assert.Empty(sessionDataFromRedis);
+				// Check that data shoud not be there
+                Assert.True(sessionDataFromRedis == RedisValue.Null);
                 DisposeRedisConnectionWrapper(redisConn);
             }
         }
@@ -258,7 +270,7 @@ namespace Microsoft.Web.Redis.FunctionalTests
 
                 int lockTimeout = 900;
 
-                // Takewrite lock successfully first time
+                // Take write lock successfully first time
                 DateTime lockTime_1 = DateTime.Now;
                 object lockId_1;
                 ISessionStateItemCollection dataFromRedis_1;
@@ -714,10 +726,11 @@ namespace Microsoft.Web.Redis.FunctionalTests
 
                 // Get data blob from redis
                 IDatabase actualConnection = GetRealRedisConnection(redisConn);
-                HashEntry[] sessionDataFromRedisAfterExpire = actualConnection.HashGetAll(redisConn.Keys.DataKey);
+				RedisValue sessionDataFromRedis = actualConnection.StringGet(redisConn.Keys.DataKey);
+                
 
                 // Check that data shoud not be there
-                Assert.Empty(sessionDataFromRedisAfterExpire);
+                Assert.True(sessionDataFromRedis == RedisValue.Null);
                 DisposeRedisConnectionWrapper(redisConn);
             }
         }

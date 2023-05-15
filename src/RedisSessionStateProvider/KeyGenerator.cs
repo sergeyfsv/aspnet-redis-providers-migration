@@ -14,12 +14,21 @@ namespace Microsoft.Web.Redis
         public string LockKey { get; private set; }
         public string InternalKey { get; private set; }
 
-        private void GenerateKeys(string id, string app)
+		public string DataKeyV1 { get; private set; }
+		public string LockKeyV1 { get; private set; }
+		public string InternalKeyV1 { get; private set; }
+
+		private void GenerateKeys(string id, string app)
         {
             this.id = id;
-            DataKey = $"{{{app}_{id}}}_SessionStateItemCollection";
-            LockKey = $"{{{app}_{id}}}_WriteLock";
-            InternalKey = $"{{{app}_{id}}}_SessionTimeout";
+
+			DataKey = $"{{{app}_{id}}}_SessionStateItemCollection";
+			LockKey = $"{{{app}_{id}}}_WriteLock";
+			InternalKey = $"{{{app}_{id}}}_SessionTimeout";
+
+			DataKeyV1 = "{" + app + "_" + id + "}_Data";
+            LockKeyV1 = "{" + app + "_" + id + "}_Write_Lock";
+            InternalKeyV1 = "{" + app + "_" + id + "}_Internal";
         }
 
         public KeyGenerator(string sessionId, string applicationName)

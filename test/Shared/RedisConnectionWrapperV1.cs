@@ -10,7 +10,7 @@ using System.Web.SessionState;
 
 namespace Microsoft.Web.Redis
 {
-    internal class RedisConnectionWrapper : ICacheConnection
+    internal class RedisConnectionWrapperV1 : ICacheConnection
     {
         internal static RedisSharedConnection sharedConnection;
         private static object lockForSharedConnection = new object();
@@ -20,7 +20,7 @@ namespace Microsoft.Web.Redis
         internal IRedisClientConnection redisConnection;
         private ProviderConfiguration configuration;
 
-        public RedisConnectionWrapper(ProviderConfiguration configuration, string id)
+        public RedisConnectionWrapperV1(ProviderConfiguration configuration, string id)
         {
             this.configuration = configuration;
             Keys = new KeyGenerator(id, configuration.ApplicationName);
@@ -66,21 +66,21 @@ namespace Microsoft.Web.Redis
                     return 1;
                 end
 
-                local SessionTimeout = redis.call('GET', KEYS[2])
+                local SessionTimeout = redis.call('HGET', KEYS[2], 'SessionTimeout')
                 if SessionTimeout ~= false then
-                    redis.call('EXPIRE',KEYS[1], SessionTimeout)
-                    redis.call('EXPIRE',KEYS[2], SessionTimeout)
+                    redis.call('EXPIRE',KEYS[1], SessionTimeout) 
+                    redis.call('EXPIRE',KEYS[2], SessionTimeout) 
                 else
-                    redis.call('EXPIRE',KEYS[1],ARGV[1])
-                    redis.call('SET', KEYS[2], ARGV[1])
-                    redis.call('EXPIRE',KEYS[2],ARGV[1])
+                    redis.call('EXPIRE',KEYS[1],ARGV[1]) 
+                    redis.call('HMSET', KEYS[2], 'SessionTimeout', ARGV[1])
+                    redis.call('EXPIRE',KEYS[2],ARGV[1]) 
                 end
                 return 1"
                 );
 
         public void UpdateExpiryTime(int timeToExpireInSeconds)
         {
-            string[] keyArgs = new string[] { Keys.DataKey, Keys.InternalKey };
+            string[] keyArgs = new string[] { Keys.DataKeyV1, Keys.InternalKeyV1 };
             object[] valueArgs = new object[1];
             valueArgs[0] = timeToExpireInSeconds;
 
@@ -91,14 +91,19 @@ namespace Microsoft.Web.Redis
 
         /*-------Start of Set operation-----------------------------------------------------------------------------------------------------------------------------------------------*/
 
-        // KEYS[1] = = data-id, internal-id
+        // Was
+		// KEYS[1] = = data-id, internal-id
         // ARGV[1] = serialized session state, ARGV[2] = session-timeout
+
+        // KEYS[1] = = data-id, internal-id
+        // ARGV[1] = last-index-in-list, ARGV[2] = session-timeout 
+        // ARGV[3..] = { data as key and value one by one }
         // this order should not change LUA script depends on it
-        private static readonly string setScript = (@"
-                redis.call('SET', KEYS[1], ARGV[1])
-                redis.call('EXPIRE',KEYS[1],ARGV[2])
-                redis.call('SET', KEYS[2], ARGV[2])
-                redis.call('EXPIRE',KEYS[2],ARGV[2])
+        private static readonly string setScript = (@" 
+                redis.call('HMSET', KEYS[1], unpack(ARGV, 3, ARGV[1]))
+                redis.call('EXPIRE',KEYS[1],ARGV[2]) 
+                redis.call('HMSET', KEYS[2], 'SessionTimeout', ARGV[2])
+                redis.call('EXPIRE',KEYS[2],ARGV[2]) 
                 return 1"
                 );
 
@@ -106,37 +111,23 @@ namespace Microsoft.Web.Redis
         {
             keyArgs = null;
             valueArgs = null;
-            try
+            if (data != null && data.Count > 0)
             {
-                byte[] serializedSessionStateItemCollection = SerializeSessionStateItemCollection(data);
-
-                keyArgs = new string[] { Keys.DataKey, Keys.InternalKey };
-
-                valueArgs = new object[] { serializedSessionStateItemCollection, sessionTimeout };
-                return true;
+                ChangeTrackingSessionStateItemCollection sessionItems = (ChangeTrackingSessionStateItemCollection)data;
+                List<object> list = RedisUtility.GetNewItemsAsList(sessionItems);
+                if (list.Count > 0)
+                {
+                    keyArgs = new string[] { Keys.DataKeyV1, Keys.InternalKeyV1 };
+                    valueArgs = new object[list.Count + 2]; // this +2 is for first 2 values in ARGV that we will add now
+                    valueArgs[0] = list.Count + 2;
+                    valueArgs[1] = sessionTimeout;
+                    list.CopyTo(valueArgs, 2);
+                    return true;
+                }
             }
-            catch
-            {
-                return false;
-            }
+			
+			return false;
         }
-
-        private byte[] SerializeSessionStateItemCollection(ISessionStateItemCollection sessionStateItemCollection)
-        {
-            try
-            {
-                MemoryStream ms = new MemoryStream();
-                BinaryWriter writer = new BinaryWriter(ms);
-                ((SessionStateItemCollection)sessionStateItemCollection).Serialize(writer);
-                writer.Close();
-                return ms.ToArray();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
         public void Set(ISessionStateItemCollection data, int sessionTimeout)
         {
             string[] keyArgs;
@@ -149,20 +140,19 @@ namespace Microsoft.Web.Redis
 
         /*-------End of Set operation-----------------------------------------------------------------------------------------------------------------------------------------------*/
 
-		/*-------Start of Lock set operation-----------------------------------------------------------------------------------------------------------------------------------------------*/
-		// 			KEYS[1],       KEYS[2], KEYS[3],     KEYS[4],		 KEYS[5],    KEYS[6]
-		// KEYS = { write-lock-id, data-id, internal-id, write-lock-idV1, data-idV1, internal-idV1 }
-		// ARGV = { write-lock-value-that-we-want-to-set, request-timeout }
-		// lockValue = 1) (Initially) write lock value that we want to set (ARGV[1]) if we get lock successfully this will return as retArray[1]
-		//             2) If another write lock exists than its lock value from cache
-		// retArray = {lockValue , session data if lock was taken successfully, session timeout value if exists, whether lock was taken or not}
-		private static readonly string writeLockAndGetDataScript = (@"
+        /*-------Start of Lock set operation-----------------------------------------------------------------------------------------------------------------------------------------------*/
+
+        // KEYS = { write-lock-id, data-id, internal-id }
+        // ARGV = { write-lock-value-that-we-want-to-set, request-timout }
+        // lockValue = 1) (Initially) write lock value that we want to set (ARGV[1]) if we get lock successfully this will return as retArray[1]
+        //             2) If another write lock exists than its lock value from cache
+        // retArray = {lockValue , session data if lock was taken successfully, session timeout value if exists, wheather lock was taken or not}
+        private static readonly string writeLockAndGetDataScript = (@"
                 local retArray = {}
                 local lockValue = ARGV[1]
                 local locked = redis.call('SETNX',KEYS[1],ARGV[1])
                 local IsLocked = true
                 
-                -- key was not set, it means it already exists and so it IsLocked
                 if locked == 0 then
                     lockValue = redis.call('GET',KEYS[1])
                 else
@@ -170,30 +160,14 @@ namespace Microsoft.Web.Redis
                     IsLocked = false
                 end
                 
-                local redisSessionStateV1Exists = false
-                local redisSessionState = false
                 retArray[1] = lockValue
-                if lockValue == ARGV[1] then
-					-- pcall is necessary here because GET does not work with Hashset; otherwise it will thrown an error
-					redisSessionStateV1Exists = redis.pcall('GET', KEYS[5])
-					redisSessionState = redis.call('GET', KEYS[2])
-					if redisSessionStateV1Exists ~= false and redisSessionState == false then
-						retArray[2] = redis.call('HGETALL',KEYS[5])
-					else
-						retArray[2] = redisSessionState
-					end
-				else
-					retArray[2] = ''
-				end
-
-                local SessionTimeout = redis.call('GET',KEYS[3])
-                if SessionTimeout ~= false then
+                if lockValue == ARGV[1] then retArray[2] = redis.call('HGETALL',KEYS[2]) else retArray[2] = '' end
+                
+                local SessionTimeout = redis.call('HGET', KEYS[3], 'SessionTimeout')
+                if SessionTimeout ~= false then 
                     retArray[3] = SessionTimeout 
                     redis.call('EXPIRE',KEYS[2], SessionTimeout) 
                     redis.call('EXPIRE',KEYS[3], SessionTimeout) 
-
-                    redis.call('EXPIRE',KEYS[5], SessionTimeout) 
-                    redis.call('EXPIRE',KEYS[6], SessionTimeout) 
                 else 
                     retArray[3] = '-1' 
                 end
@@ -205,7 +179,7 @@ namespace Microsoft.Web.Redis
         public bool TryTakeWriteLockAndGetData(DateTime lockTime, int lockTimeout, out object lockId, out ISessionStateItemCollection data, out int sessionTimeout)
         {
             string expectedLockId = lockTime.Ticks.ToString();
-            string[] keyArgs = new string[] { Keys.LockKey, Keys.DataKey, Keys.InternalKey, Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
+            string[] keyArgs = new string[] { Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
             object[] valueArgs = new object[] { expectedLockId, lockTimeout };
 
             object rowDataFromRedis = redisConnection.Eval(writeLockAndGetDataScript, keyArgs, valueArgs);
@@ -224,14 +198,12 @@ namespace Microsoft.Web.Redis
             return ret;
         }
 
-		//          KEYS[1],       KEYS[2], KEYS[3],     KEYS[4],		 KEYS[5],    KEYS[6]
-		// KEYS = { write-lock-id, data-id, internal-id, write-lock-idV1, data-idV1, internal-idV1 }
-		// KEYS = { write-lock-id, data-id, internal-id }
-		// ARGV = { }
-		// lockValue = 1) (Initially) read lock value that we want to set (ARGV[1]) if we get lock successfully this will return as retArray[1]
-		//             3) If write lock exists than its lock value from cache
-		// retArray = {lockValue , session data if lock does not exist}
-		private static readonly string readLockAndGetDataScript = (@"
+        // KEYS = { write-lock-id, data-id, internal-id }
+        // ARGV = { }
+        // lockValue = 1) (Initially) read lock value that we want to set (ARGV[1]) if we get lock successfully this will return as retArray[1]
+        //             3) If write lock exists than its lock value from cache
+        // retArray = {lockValue , session data if lock does not exist}
+        private static readonly string readLockAndGetDataScript = (@"
                     local retArray = {}
                     local lockValue = ''
                     local writeLockValue = redis.call('GET',KEYS[1])
@@ -239,39 +211,22 @@ namespace Microsoft.Web.Redis
                        lockValue = writeLockValue
                     end
                     retArray[1] = lockValue
-                    local redisSessionStateV1Exists = false
-                    local redisSessionState = false
-                    if lockValue == '' then
-						-- pcall is necessary here because GET does not work with Hashset; otherwise it will thrown an error
-						redisSessionStateV1Exists = redis.pcall('GET', KEYS[5])
-						redisSessionState = redis.call('GET', KEYS[2])
-						if redisSessionStateV1Exists ~= false and redisSessionState == false then
-							retArray[2] = redis.call('HGETALL',KEYS[5])
-						else
-							retArray[2] = redisSessionState
-						end
-					else
-						retArray[2] = ''
-					end
-
-	                local SessionTimeout = redis.call('GET',KEYS[3])
-	                if SessionTimeout ~= false then
-	                    retArray[3] = SessionTimeout 
-	                    redis.call('EXPIRE',KEYS[2], SessionTimeout) 
-	                    redis.call('EXPIRE',KEYS[3], SessionTimeout) 
-
-	                    redis.call('EXPIRE',KEYS[5], SessionTimeout) 
-	                    redis.call('EXPIRE',KEYS[6], SessionTimeout) 
-	                else 
-	                    retArray[3] = '-1' 
-	                end
-
+                    if lockValue == '' then retArray[2] = redis.call('HGETALL',KEYS[2]) else retArray[2] = '' end
+                    
+                    local SessionTimeout = redis.call('HGET', KEYS[3], 'SessionTimeout')
+                    if SessionTimeout ~= false then 
+                        retArray[3] = SessionTimeout 
+                        redis.call('EXPIRE',KEYS[2], SessionTimeout) 
+                        redis.call('EXPIRE',KEYS[3], SessionTimeout) 
+                    else 
+                        retArray[3] = '-1' 
+                    end
                     return retArray
                     ");
 
         public bool TryCheckWriteLockAndGetData(out object lockId, out ISessionStateItemCollection data, out int sessionTimeout)
         {
-			string[] keyArgs = { Keys.LockKey, Keys.DataKey, Keys.InternalKey, Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
+			string[] keyArgs = new string[] { Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
             object[] valueArgs = new object[] { };
 
             object rowDataFromRedis = redisConnection.Eval(readLockAndGetDataScript, keyArgs, valueArgs);
@@ -297,7 +252,7 @@ namespace Microsoft.Web.Redis
 
         public void TryReleaseLockIfLockIdMatch(object lockId, int sessionTimeout)
         {
-			string[] keyArgs = { Keys.LockKey, Keys.DataKey, Keys.InternalKey, Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
+			string[] keyArgs = new string[] { Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
             object[] valueArgs = { lockId, sessionTimeout };
             redisConnection.Eval(releaseWriteLockIfLockMatchScript, keyArgs, valueArgs);
         }
@@ -309,17 +264,12 @@ namespace Microsoft.Web.Redis
                 if writeLockValueFromCache == ARGV[1] then
                     redis.call('DEL',KEYS[1])
                 end 
-
-                local SessionTimeout = redis.call('GET', KEYS[3])
+                local SessionTimeout = redis.call('HGET', KEYS[3], 'SessionTimeout')
                 if SessionTimeout ~= false then 
                     redis.call('EXPIRE',KEYS[2], SessionTimeout) 
                     redis.call('EXPIRE',KEYS[3], SessionTimeout) 
-
-                    redis.call('EXPIRE',KEYS[5], SessionTimeout) 
-                    redis.call('EXPIRE',KEYS[6], SessionTimeout) 
                 else 
                     redis.call('EXPIRE',KEYS[2],ARGV[2])
-                    redis.call('EXPIRE',KEYS[5],ARGV[2])
                 end
                 return 1
                 ");
@@ -338,15 +288,11 @@ namespace Microsoft.Web.Redis
                 redis.call('DEL',KEYS[2])
                 redis.call('DEL',KEYS[3])
                 redis.call('DEL',KEYS[1])
-
-                redis.call('DEL',KEYS[5])
-                redis.call('DEL',KEYS[6])
-                redis.call('DEL',KEYS[4])
                 ");
 
         public void TryRemoveAndReleaseLock(object lockId)
         {
-            string[] keyArgs = { Keys.LockKey, Keys.DataKey, Keys.InternalKey, Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
+			string[] keyArgs = new string[] { Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
             lockId = lockId ?? "";
             object[] valueArgs = { lockId.ToString() };
             redisConnection.Eval(removeSessionScript, keyArgs, valueArgs);
@@ -367,11 +313,12 @@ namespace Microsoft.Web.Redis
                         return 1
                     end
                 end
-                if tonumber(ARGV[6]) ~= 0 then redis.call('SET', KEYS[2], ARGV[10]) end
-                redis.call('EXPIRE',KEYS[2],ARGV[2])
-                redis.call('SET', KEYS[3], ARGV[2])
-                redis.call('EXPIRE',KEYS[3],ARGV[2])
-                redis.call('DEL',KEYS[1])");
+               if tonumber(ARGV[3]) ~= 0 then redis.call('HDEL', KEYS[2], unpack(ARGV, ARGV[4], ARGV[5])) end
+               if tonumber(ARGV[6]) ~= 0 then redis.call('HMSET', KEYS[2], unpack(ARGV, ARGV[7], ARGV[8])) end
+               redis.call('EXPIRE',KEYS[2],ARGV[2])
+               redis.call('HMSET', KEYS[3], 'SessionTimeout', ARGV[2])
+               redis.call('EXPIRE',KEYS[3],ARGV[2]) 
+               redis.call('DEL',KEYS[1])");
 
         private bool TryUpdateAndReleaseLockPrepare(object lockId, ISessionStateItemCollection data, int sessionTimeout, out string[] keyArgs, out object[] valueArgs)
         {
@@ -380,20 +327,11 @@ namespace Microsoft.Web.Redis
             if (data != null)
             {
                 List<object> list = new List<object>();
-                int noOfItemsRemoved = 0;
-                int noOfItemsUpdated = 0;
-                try
-                {
-                    byte[] serializedSessionStateItemCollection = SerializeSessionStateItemCollection(data);
-                    list.Add("SessionState");
-                    list.Add(serializedSessionStateItemCollection);
-                    noOfItemsUpdated = 1;
-                }
-                catch
-                {
-                }
+                ChangeTrackingSessionStateItemCollection sessionItems = (ChangeTrackingSessionStateItemCollection)data;
+                int noOfItemsRemoved = RedisUtility.AppendRemoveItemsInList(sessionItems, list);
+                int noOfItemsUpdated = RedisUtility.AppendUpdatedOrNewItemsInList(sessionItems, list);
 
-                keyArgs = new string[] { Keys.LockKey, Keys.DataKey, Keys.InternalKey };
+                keyArgs = new string[] { Keys.LockKeyV1, Keys.DataKeyV1, Keys.InternalKeyV1 };
                 valueArgs = new object[list.Count + 8]; // this +8 is for first wight values in ARGV that we will add now
                 valueArgs[0] = lockId ?? "";
                 valueArgs[1] = sessionTimeout;
